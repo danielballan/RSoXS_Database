@@ -129,17 +129,6 @@
     }
   },
   "required": [
-    "sample_name",
-    "date_created",
-    "user_id",
-    "project_name",
-    "institution_id",
-    "notes",
-    "state",
-    "location_id",
-    "current_bar_id",
-    "current_slot_name",
-    "requests",
-    "priority"
+    "name"
   ]
 }
