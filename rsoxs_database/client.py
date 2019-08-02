@@ -3,6 +3,17 @@ from .objects import Sample
 
 
 class Client:
+    """
+    This connects to several MongoDB collections for sample management.
+
+    For each collection, we have a traitlets-based object to represent
+    documents from that collection and automatically sync any changes back to
+    the database.
+
+    Each collection has a counterpart named {collection_name}_revisions that
+    stores previous version of the document. This approach was inspired by:
+    https://www.mongodb.com/blog/post/building-with-patterns-the-document-versioning-pattern
+    """
     COLLECTION_NAMES = {Sample: 'samples'}
 
     def __init__(self, database):
@@ -62,24 +73,41 @@ class Client:
         # Insert the old version in {collection_name}_revisions
         revisions = revisions.insert(original)
 
-    def new_sample(self, *args, **kwargs):
-        return self._new_document(Sample, args, kwargs)
+    def _document_to_obj(self, obj_type, document):
+        """
+        Convert a dict returned by pymongo to our traitlets-based object.
+        """
+        # Remove the internal MongoDB id.
+        document.pop('_id')
+
+        # Handle the read_only traits separately.
+        uuid = document.pop('uuid')
+        revision = document.pop('revision')
+        obj = obj_type(**document)
+        obj.set_trait('uuid', uuid)
+        obj.set_trait('revision', revision)
+
+        # Observe any updates to the object and sync them to MongoDB.
+        obj.observe(self._update)
+
+        return obj
 
     def revisions(self, obj):
         """
-        Access all revisions to an object.
+        Access all revisions to an object with the most recent first.
         """
         revisions = self._db[f'{self.COLLECTION_NAMES[type(obj)]}_revisions']
-        for document in revisions.find({'uuid': obj.uuid}):
-            # Remove the internal MongoDB id.
-            document.pop('_id')
-            # Handle the read_only traits separately.
-            uuid = document.pop('uuid')
-            revision = document.pop('revision')
-            ret = type(obj)(**document)
-            ret.set_trait('uuid', uuid)
-            ret.set_trait('revision', revision)
-            yield ret
+        type_ = type(obj)
+        for document in (revisions.find({'uuid': obj.uuid})
+                                  .sort('revision', pymongo.DESCENDING)):
+            yield self._document_to_obj(type_, document)
+
+    def new_sample(self, *args, **kwargs):
+        return self._new_document(Sample, args, kwargs)
+
+    def find_samples(self, filter):
+        for document in self._db['samples'].find(filter):
+            yield self._document_to_obj(Sample, document)
 
 
 def _get_database(uri):
